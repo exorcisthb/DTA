@@ -1,62 +1,95 @@
-name: Fetch SJC Gold Price
+name: Fetch SJC Gold Price Daily
 
 on:
+  # Chạy lúc 7:00 sáng giờ Việt Nam (UTC+7) = 0:00 UTC
   schedule:
-    - cron: '0 6 * * *'
-  
-  workflow_dispatch: 
-  
+    - cron: '0 0 * * *'
+
+  # Cho phép chạy thủ công từ GitHub Actions UI
+  workflow_dispatch:
+
+  # Chạy lại khi push code lên các file liên quan
   push:
     branches:
       - main
     paths:
-      - 'data/gold_sjc/get_sjc_price.py'
+      - 'data/gold_sjc/fetch_daily.py'
+      - 'data/gold_sjc/build_sjc_2015_2026.py'
       - '.github/workflows/fetch_sjc_price.yml'
 
 jobs:
-  fetch-gold-price:
+  fetch-and-build:
     runs-on: ubuntu-latest
-    
+    permissions:
+      contents: write
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-        cache: 'pip'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    
-    - name: Fetch SJC Gold Price
-      run: |
-        cd data/gold_sjc
-        python get_sjc_price.py
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-    - name: Sync GitHub Pages data
-      run: |
-        mkdir -p docs/data
-        cp data/gold_sjc/sjc_final.csv docs/data/sjc_final.csv
+      # ── 2. Cài Python ────────────────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
 
-    - name: Commit and push changes
-      run: |
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
-        git add data/gold_sjc/sjc_final.csv
-        git add docs/data/sjc_final.csv
-        
-        if git diff --staged --quiet; then
-          echo "No changes in SJC gold price."
-        else
-          git commit -m "Update SJC gold price - $(date +'%Y-%m-%d')"
-          git push
-          echo "Updated SJC gold price"
-        fi
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # ── 3. Cài dependencies ─────────────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 pandas openpyxl lxml
+
+      # ── 4. Cào giá hôm nay từ webgia.com → sjc_final.csv ───────────────────
+      - name: Fetch today's SJC price
+        working-directory: data/gold_sjc
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
+        run: |
+          echo "=== Đang cào giá vàng SJC ngày $(date +'%Y-%m-%d') ==="
+          python fetch_daily.py
+
+      # ── 5. Build bộ dữ liệu đầy đủ từ 2015 → nay ───────────────────────────
+      - name: Build full SJC dataset (CSV + XLSX)
+        working-directory: data/gold_sjc
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
+        run: |
+          echo "=== Đang build dataset lịch sử SJC ==="
+          python build_sjc_2015_2026.py
+
+      # ── 6. Đồng bộ file CSV cho GitHub Pages ────────────────────────────────
+      - name: Sync data for GitHub Pages
+        run: |
+          mkdir -p docs/data
+          cp data/gold_sjc/sjc_final.csv docs/data/sjc_final.csv
+
+      # ── 7. Commit & push nếu có thay đổi ────────────────────────────────────
+      - name: Commit and push changes
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            data/gold_sjc/sjc_final.csv \
+            data/gold_sjc/sjc_history_2015_2026.csv \
+            data/gold_sjc/sjc_gia_vang_2015_2026.xlsx \
+            data/gold_sjc/sjc_times_cache.json \
+            docs/data/sjc_final.csv
+
+          if git diff --staged --quiet; then
+            echo "Không có dữ liệu mới — bỏ qua commit."
+          else
+            DATE_TAG=$(date +'%Y-%m-%d' --date='TZ="Asia/Ho_Chi_Minh" now')
+            git commit -m "chore: cập nhật giá vàng SJC — $DATE_TAG"
+            git push
+            echo "✅ Đã push thành công!"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

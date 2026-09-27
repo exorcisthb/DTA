@@ -186,15 +186,23 @@ def build_dataset():
                 "sell": s_live,
                 "source": "SJC Official API",
             }
-            # Ngày hôm nay 2026-09-27 (Chủ Nhật)
-            price_dict["2026-09-27"] = {
+            # Cập nhật cho ngày hôm nay (dynamic)
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            price_dict[today_str] = {
                 "buy": b_live,
                 "sell": s_live,
-                "source": "SJC Official API (Chủ Nhật)",
+                "source": "SJC Official API",
             }
 
-    # TẠO TOÀN BỘ CHUỖI LỊCH TỪ 2015-01-01 ĐẾN 2026-09-27 (4,288 ngày liên tục)
-    full_calendar = [d.strftime("%Y-%m-%d") for d in pd.date_range("2015-01-01", "2026-09-27")]
+    # TẠO TOÀN BỘ CHUỖI LỊCH TỪ 2015-01-01 ĐẾN NGÀY MỚI NHẤT TRONG sjc_final.csv
+    # (Tự động cập nhật mỗi ngày, không cần sửa tay)
+    if os.path.exists(FINAL_CSV):
+        df_dates = pd.read_csv(FINAL_CSV, usecols=["timestamp"], dtype=str)
+        end_date = df_dates["timestamp"].dropna().max()
+    else:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+    print(f"Tạo lịch từ 2015-01-01 đến {end_date}...")
+    full_calendar = [d.strftime("%Y-%m-%d") for d in pd.date_range("2015-01-01", end_date)]
     times_dict = load_or_fetch_times(full_calendar)
     
     history_records = []
@@ -216,8 +224,10 @@ def build_dataset():
             
         t_val = times_dict.get(d_str)
         if not is_valid_market_time(t_val):
-            # Nếu là ngày hôm nay/hôm qua có giờ live
-            if d_str in ["2026-09-26", "2026-09-27"]:
+            # Nếu là ngày hôm nay/hôm qua có giờ live thì dùng giờ live
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            yesterday_str = (pd.Timestamp.now() - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            if d_str in [today_str, yesterday_str] and live_time_str:
                 t_val = live_time_str
             else:
                 t_val = "17:00"
